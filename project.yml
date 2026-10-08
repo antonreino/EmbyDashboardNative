@@ -1,0 +1,33 @@
+name: EmbyDashboard
+options:
+  bundleIdPrefix: ovh.tonecas
+settings:
+  base:
+    SWIFT_VERSION: 5.0
+targets:
+  EmbyDashboard iOS:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources: [EmbyDashboard]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ovh.tonecas.embydashboard.ios
+        PRODUCT_NAME: Emby Dashboard
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Emby Dashboard
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SUPPORTS_MACCATALYST: NO
+  EmbyDashboard macOS:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources: [EmbyDashboard]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ovh.tonecas.embydashboard.macos
+        PRODUCT_NAME: Emby Dashboard
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Emby Dashboard

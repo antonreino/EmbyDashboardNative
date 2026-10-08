@@ -1,0 +1,109 @@
+import Foundation
+
+struct APIClient {
+    var baseURL: URL
+    var username: String
+    var password: String
+
+    private var authHeader: String {
+        Data("\(username):\(password)".utf8).base64EncodedString()
+    }
+
+    private func request(path: String, method: String = "GET", body: Data? = nil, contentType: String? = nil, extraHeaders: [String: String] = [:]) throws -> URLRequest {
+        guard let url = URL(string: path, relativeTo: baseURL)?.absoluteURL else {
+            throw URLError(.badURL)
+        }
+        var req = URLRequest(url: url)
+        req.httpMethod = method
+        req.timeoutInterval = 30
+        req.cachePolicy = .reloadIgnoringLocalCacheData
+        req.setValue("Basic \(authHeader)", forHTTPHeaderField: "Authorization")
+        if let contentType { req.setValue(contentType, forHTTPHeaderField: "Content-Type") }
+        extraHeaders.forEach { req.setValue($1, forHTTPHeaderField: $0) }
+        req.httpBody = body
+        return req
+    }
+
+    private func execute<T: Decodable>(_ request: URLRequest, as type: T.Type) async throws -> T {
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+        guard (200..<300).contains(http.statusCode) else {
+            if let ack = try? JSONDecoder().decode(APIAck.self, from: data), let error = ack.error {
+                throw NSError(domain: "EmbyDashboard", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: error])
+            }
+            if http.statusCode == 401 {
+                throw NSError(domain: "EmbyDashboard", code: 401, userInfo: [NSLocalizedDescriptionKey: "Usuario o contraseña incorrectos"])
+            }
+            throw NSError(domain: "EmbyDashboard", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: "HTTP \(http.statusCode)"])
+        }
+        do {
+            return try JSONDecoder().decode(type, from: data)
+        } catch let DecodingError.typeMismatch(expected, context) {
+            let path = context.codingPath.map(\.stringValue).joined(separator: ".")
+            throw NSError(
+                domain: "EmbyDashboard",
+                code: -2,
+                userInfo: [NSLocalizedDescriptionKey: "Formato inesperado en \(path.isEmpty ? "respuesta" : path): se esperaba \(expected). \(context.debugDescription)"]
+            )
+        } catch let DecodingError.valueNotFound(expected, context) {
+            let path = context.codingPath.map(\.stringValue).joined(separator: ".")
+            throw NSError(
+                domain: "EmbyDashboard",
+                code: -3,
+                userInfo: [NSLocalizedDescriptionKey: "Valor ausente en \(path.isEmpty ? "respuesta" : path): \(expected). \(context.debugDescription)"]
+            )
+        } catch let DecodingError.keyNotFound(key, context) {
+            let parent = context.codingPath.map(\.stringValue).joined(separator: ".")
+            let path = parent.isEmpty ? key.stringValue : "\(parent).\(key.stringValue)"
+            throw NSError(
+                domain: "EmbyDashboard",
+                code: -4,
+                userInfo: [NSLocalizedDescriptionKey: "Falta el campo \(path) en la respuesta del servidor."]
+            )
+        } catch let DecodingError.dataCorrupted(context) {
+            let path = context.codingPath.map(\.stringValue).joined(separator: ".")
+            let snippet = String(data: data.prefix(600), encoding: .utf8) ?? "<respuesta no textual>"
+            throw NSError(
+                domain: "EmbyDashboard",
+                code: -5,
+                userInfo: [NSLocalizedDescriptionKey: "JSON no válido en \(path.isEmpty ? "respuesta" : path). \(context.debugDescription)\n\nServidor: \(snippet)"]
+            )
+        } catch {
+            let snippet = String(data: data.prefix(600), encoding: .utf8) ?? "<respuesta no textual>"
+            throw NSError(
+                domain: "EmbyDashboard",
+                code: -6,
+                userInfo: [NSLocalizedDescriptionKey: "No se pudo interpretar la respuesta del servidor: \(error.localizedDescription)\n\nServidor: \(snippet)"]
+            )
+        }
+    }
+
+    func dashboard() async throws -> DashboardResponse {
+        try await execute(try request(path: "/api/dashboard"), as: DashboardResponse.self)
+    }
+
+    func logs(lines: Int = 300) async throws -> LogResponse {
+        try await execute(try request(path: "/api/logs?lines=\(lines)"), as: LogResponse.self)
+    }
+
+    func deals(lines: Int = 300) async throws -> DealsResponse {
+        try await execute(try request(path: "/api/deals?lines=\(lines)"), as: DealsResponse.self)
+    }
+
+    func queueDownload(url: String) async throws -> APIAck {
+        let body = try JSONSerialization.data(withJSONObject: ["url": url])
+        return try await execute(try request(path: "/api/download", method: "POST", body: body, contentType: "application/json"), as: APIAck.self)
+    }
+
+    func uploadTorrent(data: Data, filename: String) async throws -> APIAck {
+        let encoded = filename.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? filename
+        let req = try request(
+            path: "/api/torrent",
+            method: "POST",
+            body: data,
+            contentType: "application/x-bittorrent",
+            extraHeaders: ["X-Torrent-Filename": encoded]
+        )
+        return try await execute(req, as: APIAck.self)
+    }
+}
